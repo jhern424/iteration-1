@@ -29,13 +29,14 @@ tau: 2.0                   # LIF neuron time constant
 batch_size: 128            # REDUCED from 256 (better gradients)
 val_batch_size: 128        # Match training batch size
 epochs: 100                # Total training epochs
-lr: 1e-4                   # REDUCED from 5e-4 (CRITICAL FIX - was too high)
-min_lr: 1e-7               # Lower minimum
+lr: 5e-5                   # REDUCED again (was 1e-4, still too high)
+min_lr: 1e-8               # Lower minimum
 weight_decay: 1e-3         # INCREASED from 1e-4 (more regularization)
 opt: adamw                 # Optimizer
 sched: cosine              # Learning rate scheduler
-warmup_epochs: 10          # INCREASED from 5 (longer warmup)
-warmup_lr: 1e-6            # REDUCED from 1e-5 (gentler start)
+warmup_epochs: 20          # INCREASED for stability (was 10)
+warmup_lr: 1e-7            # REDUCED for gentler start (was 1e-6)
+clip_grad_norm: 0.5        # REDUCED (was 1.0) - more aggressive clipping
 
 # Teacher forcing schedule (keep MORE teacher forcing)
 teacher_forcing_start: 1.0 # Start with 100% teacher forcing

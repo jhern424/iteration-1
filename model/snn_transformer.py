@@ -305,10 +305,14 @@ class SNNTransformerForecaster(nn.Module):
             else:
                 # Use prediction (sample from Poisson/Bernoulli)
                 with torch.no_grad():
-                    rate = torch.exp(next_pred.clamp(max=5.0))  # Avoid overflow
+                    # Aggressive clamping to prevent numerical overflow
+                    rate = torch.exp(next_pred.clamp(min=-10.0, max=3.0))  # Tighter clamp
                     # For small dt, Poisson ≈ Bernoulli
-                    prob = 1.0 - torch.exp(-rate)
-                    next_spike = torch.bernoulli(prob.clamp(0, 1)).unsqueeze(-1)  # (B, 1, 1)
+                    lambda_t = rate * 0.005  # dt = 0.005
+                    lambda_t = lambda_t.clamp(max=0.5)  # Prevent prob > 1
+                    prob = 1.0 - torch.exp(-lambda_t)
+                    prob = prob.clamp(1e-7, 1.0 - 1e-7)  # Ensure valid probability
+                    next_spike = torch.bernoulli(prob).unsqueeze(-1)  # (B, 1, 1)
 
             # Encode next spike and append to sequence
             next_encoded = self.snn_encoder(next_spike)  # (B, 1, embed_dim)

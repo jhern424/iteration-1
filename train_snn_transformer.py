@@ -188,8 +188,9 @@ def train_one_epoch(model, data_loader, criterion, optimizer, device, epoch, con
         optimizer.zero_grad()
         loss.backward()
 
-        # Gradient clipping for stability
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        # Gradient clipping for stability (from config)
+        clip_norm = config.get('clip_grad_norm', 1.0)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=clip_norm)
 
         optimizer.step()
 
@@ -469,9 +470,9 @@ def main(args):
     sample_history, sample_target = next(iter(train_loader))
     spike_rate = sample_target.mean().item()
     pos_weight = (1.0 - spike_rate) / max(spike_rate, 1e-6)  # (neg_samples / pos_samples)
-    pos_weight = min(pos_weight, 100.0)  # Cap at 100 to avoid extreme values
+    pos_weight = min(pos_weight, 30.0)  # Cap at 30 (REDUCED from 100 for stability)
     print(f'Spike rate: {spike_rate:.6f} ({spike_rate*100:.4f}%)')
-    print(f'Positive class weight: {pos_weight:.2f}')
+    print(f'Positive class weight: {pos_weight:.2f} (capped for numerical stability)')
 
     if loss_type == 'poisson':
         criterion = PoissonNLLLoss(dt=dt)
