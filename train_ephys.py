@@ -17,11 +17,21 @@ import yaml
 import os
 import sys
 from collections import OrderedDict
+import psutil
+import subprocess
 
 from torch.utils.data import DataLoader, random_split
 from torch.utils.tensorboard import SummaryWriter
 from sklearn.metrics import f1_score, precision_score, recall_score, roc_auc_score
 from spikingjelly.clock_driven import functional
+
+# Comet ML for experiment tracking
+try:
+    from comet_ml import Experiment
+    COMET_AVAILABLE = True
+except ImportError:
+    COMET_AVAILABLE = False
+    print("Warning: comet_ml not available. Install with: pip install comet_ml")
 
 # Import custom modules
 from data.ephys_dataset import EphysDataset, get_class_weights
@@ -77,6 +87,38 @@ def load_config(config_path):
     return config
 
 
+def get_system_resources():
+    """Get current system resource usage."""
+    resources = {}
+
+    # CPU and Memory
+    resources['cpu_percent'] = psutil.cpu_percent(interval=0.1)
+    resources['memory_percent'] = psutil.virtual_memory().percent
+    resources['memory_used_gb'] = psutil.virtual_memory().used / (1024**3)
+    resources['memory_total_gb'] = psutil.virtual_memory().total / (1024**3)
+
+    # GPU if available
+    if torch.cuda.is_available():
+        try:
+            # Get GPU stats using nvidia-smi
+            result = subprocess.run(
+                ['nvidia-smi', '--query-gpu=utilization.gpu,utilization.memory,memory.used,memory.total,temperature.gpu',
+                 '--format=csv,noheader,nounits'],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                gpu_stats = result.stdout.strip().split(',')
+                resources['gpu_utilization'] = float(gpu_stats[0])
+                resources['gpu_memory_utilization'] = float(gpu_stats[1])
+                resources['gpu_memory_used_mb'] = float(gpu_stats[2])
+                resources['gpu_memory_total_mb'] = float(gpu_stats[3])
+                resources['gpu_temperature'] = float(gpu_stats[4])
+        except Exception as e:
+            print(f"Warning: Could not get GPU stats: {e}")
+
+    return resources
+
+
 class MetricTracker:
     """Track and compute metrics for spike forecasting."""
 
@@ -127,7 +169,7 @@ class MetricTracker:
         return metrics
 
 
-def train_one_epoch(model, data_loader, criterion, optimizer, device, epoch, config, writer=None):
+def train_one_epoch(model, data_loader, criterion, optimizer, device, epoch, config, writer=None, experiment=None):
     """Train for one epoch."""
     model.train()
     metric_tracker = MetricTracker()
@@ -136,6 +178,7 @@ def train_one_epoch(model, data_loader, criterion, optimizer, device, epoch, con
     print_freq = config.get('print_freq', 50)
 
     start_time = time.time()
+    global_step = epoch * num_batches
 
     for batch_idx, (history, target) in enumerate(data_loader):
         history = history.to(device)
@@ -156,15 +199,38 @@ def train_one_epoch(model, data_loader, criterion, optimizer, device, epoch, con
         # Update metrics
         metric_tracker.update(predictions, target, loss)
 
-        # Print progress
+        # Log to Comet ML (every batch)
+        if experiment is not None:
+            experiment.log_metric("train_batch_loss", loss.item(), step=global_step + batch_idx)
+
+        # Print progress and log resources
         if batch_idx % print_freq == 0:
             elapsed = time.time() - start_time
+
+            # Get system resources
+            resources = get_system_resources()
+
+            # Log resources to Comet
+            if experiment is not None:
+                for key, value in resources.items():
+                    experiment.log_metric(f"resources/{key}", value, step=global_step + batch_idx)
+
             print(f'Epoch: [{epoch}][{batch_idx}/{num_batches}]\t'
                   f'Loss: {loss.item():.4f}\t'
                   f'Time: {elapsed:.2f}s')
 
     # Compute epoch metrics
     metrics = metric_tracker.compute()
+
+    # Log to Comet ML
+    if experiment is not None:
+        for key, value in metrics.items():
+            experiment.log_metric(f'train/{key}', value, epoch=epoch)
+
+        # Log final resources for the epoch
+        final_resources = get_system_resources()
+        for key, value in final_resources.items():
+            experiment.log_metric(f'resources_epoch/{key}', value, epoch=epoch)
 
     # Log to tensorboard
     if writer is not None:
@@ -175,7 +241,7 @@ def train_one_epoch(model, data_loader, criterion, optimizer, device, epoch, con
 
 
 @torch.no_grad()
-def evaluate(model, data_loader, criterion, device, config):
+def evaluate(model, data_loader, criterion, device, config, experiment=None):
     """Evaluate the model."""
     model.eval()
     metric_tracker = MetricTracker()
@@ -196,6 +262,11 @@ def evaluate(model, data_loader, criterion, device, config):
 
     # Compute metrics
     metrics = metric_tracker.compute()
+
+    # Log validation metrics to Comet
+    if experiment is not None:
+        for key, value in metrics.items():
+            experiment.log_metric(f'val/{key}', value)
 
     return metrics
 
@@ -273,6 +344,31 @@ def main(args):
 
     # Setup tensorboard
     writer = SummaryWriter(log_dir) if config.get('tensorboard', True) else None
+
+    # Setup Comet ML experiment tracking
+    experiment = None
+    if COMET_AVAILABLE:
+        try:
+            experiment = Experiment(
+                api_key="4vztTofj3MwmXfdlOsbYmcwrQ",
+                project_name="snn-torch",
+                workspace="jhern424"
+            )
+            # Log hyperparameters
+            experiment.log_parameters(config)
+            experiment.set_name(f"spikeformer_ephys_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}")
+            experiment.add_tag("ephys")
+            experiment.add_tag("spike-forecasting")
+            if torch.cuda.is_available():
+                experiment.add_tag("gpu")
+                experiment.log_parameter("gpu_name", torch.cuda.get_device_name(0))
+            else:
+                experiment.add_tag("cpu")
+            print("✓ Comet ML experiment initialized")
+            print(f"  View at: {experiment.url}")
+        except Exception as e:
+            print(f"Warning: Could not initialize Comet ML: {e}")
+            experiment = None
 
     print('='*80)
     print('Loading datasets...')
@@ -402,7 +498,7 @@ def main(args):
     # Evaluation only mode
     if args.eval_only:
         print('Evaluating model...')
-        val_metrics = evaluate(model, val_loader, criterion, device, config)
+        val_metrics = evaluate(model, val_loader, criterion, device, config, experiment)
         print('Validation metrics:')
         for key, value in val_metrics.items():
             print(f'  {key}: {value:.4f}')
@@ -421,7 +517,7 @@ def main(args):
         # Train
         train_metrics = train_one_epoch(
             model, train_loader, criterion, optimizer, device,
-            epoch, config, writer
+            epoch, config, writer, experiment
         )
 
         print(f'Train - Loss: {train_metrics["loss"]:.4f}, '
@@ -430,7 +526,7 @@ def main(args):
               f'Recall: {train_metrics["recall"]:.4f}')
 
         # Validate
-        val_metrics = evaluate(model, val_loader, criterion, device, config)
+        val_metrics = evaluate(model, val_loader, criterion, device, config, experiment)
 
         print(f'Val   - Loss: {val_metrics["loss"]:.4f}, '
               f'F1: {val_metrics["f1"]:.4f}, '
