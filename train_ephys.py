@@ -24,6 +24,7 @@ from torch.utils.data import DataLoader, random_split
 from torch.utils.tensorboard import SummaryWriter
 from sklearn.metrics import f1_score, precision_score, recall_score, roc_auc_score
 from spikingjelly.clock_driven import functional
+from torch.cuda.amp import autocast, GradScaler
 
 # Comet ML for experiment tracking
 try:
@@ -127,15 +128,20 @@ class MetricTracker:
 
     def reset(self):
         self.predictions = []
+        self.predictions_proba = []  # Store probabilities for AUC-ROC
         self.targets = []
         self.losses = []
 
     def update(self, pred, target, loss=None):
         """Update with batch predictions and targets."""
+        # Store probabilities for AUC-ROC (FIXED: was using binary predictions)
+        pred_proba = torch.sigmoid(pred)
+
         # Convert to binary predictions (threshold at 0.5)
-        pred_binary = (torch.sigmoid(pred) > 0.5).float()
+        pred_binary = (pred_proba > 0.5).float()
 
         self.predictions.append(pred_binary.detach().cpu().numpy())
+        self.predictions_proba.append(pred_proba.detach().cpu().numpy())
         self.targets.append(target.detach().cpu().numpy())
         if loss is not None:
             self.losses.append(loss.item())
@@ -146,19 +152,24 @@ class MetricTracker:
             return {}
 
         preds = np.concatenate(self.predictions, axis=0).flatten()
+        preds_proba = np.concatenate(self.predictions_proba, axis=0).flatten()
         targets = np.concatenate(self.targets, axis=0).flatten()
 
         metrics = {}
         metrics['loss'] = np.mean(self.losses) if self.losses else 0.0
 
-        # Classification metrics
+        # Classification metrics (use binary predictions)
         metrics['f1'] = f1_score(targets, preds, zero_division=0)
         metrics['precision'] = precision_score(targets, preds, zero_division=0)
         metrics['recall'] = recall_score(targets, preds, zero_division=0)
 
-        # AUC-ROC (requires probabilities)
+        # AUC-ROC (FIXED: now uses probabilities, not binary predictions)
         try:
-            metrics['auc_roc'] = roc_auc_score(targets, preds)
+            # Only compute if we have both classes
+            if len(np.unique(targets)) > 1:
+                metrics['auc_roc'] = roc_auc_score(targets, preds_proba)
+            else:
+                metrics['auc_roc'] = 0.0
         except ValueError:
             metrics['auc_roc'] = 0.0
 
@@ -169,13 +180,18 @@ class MetricTracker:
         return metrics
 
 
-def train_one_epoch(model, data_loader, criterion, optimizer, device, epoch, config, writer=None, experiment=None):
-    """Train for one epoch."""
+def train_one_epoch(model, data_loader, criterion, optimizer, device, epoch, config, writer=None, experiment=None, scaler=None):
+    """Train for one epoch with gradient clipping and AMP support."""
     model.train()
     metric_tracker = MetricTracker()
 
     num_batches = len(data_loader)
     print_freq = config.get('print_freq', 50)
+    use_amp = config.get('amp', False) and scaler is not None
+    grad_clip = config.get('grad_clip', 1.0)  # Default gradient clipping threshold
+
+    # Gradient monitoring
+    grad_norms = []
 
     start_time = time.time()
     global_step = epoch * num_batches
@@ -184,14 +200,42 @@ def train_one_epoch(model, data_loader, criterion, optimizer, device, epoch, con
         history = history.to(device)
         target = target.to(device)
 
-        # Forward pass
-        predictions, _ = model(history)
-        loss = criterion(predictions, target)
+        # Forward pass with AMP
+        if use_amp:
+            with autocast():
+                predictions, _ = model(history)
+                # Clamp predictions for numerical stability
+                predictions = torch.clamp(predictions, min=-10, max=10)
+                loss = criterion(predictions, target)
+        else:
+            predictions, _ = model(history)
+            # Clamp predictions for numerical stability
+            predictions = torch.clamp(predictions, min=-10, max=10)
+            loss = criterion(predictions, target)
 
-        # Backward pass
+        # Check for NaN loss
+        if torch.isnan(loss) or torch.isinf(loss):
+            print(f'WARNING: NaN/Inf loss detected at epoch {epoch}, batch {batch_idx}. Skipping batch.')
+            functional.reset_net(model)
+            continue
+
+        # Backward pass with gradient scaling
         optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        if use_amp:
+            scaler.scale(loss).backward()
+            # Gradient clipping (CRITICAL for SNN stability)
+            scaler.unscale_(optimizer)
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            # Gradient clipping (CRITICAL for SNN stability)
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+            optimizer.step()
+
+        # Track gradient norms
+        grad_norms.append(grad_norm.item() if isinstance(grad_norm, torch.Tensor) else grad_norm)
 
         # Reset spiking neuron states to avoid retaining computational graph
         functional.reset_net(model)
@@ -202,6 +246,7 @@ def train_one_epoch(model, data_loader, criterion, optimizer, device, epoch, con
         # Log to Comet ML (every batch)
         if experiment is not None:
             experiment.log_metric("train_batch_loss", loss.item(), step=global_step + batch_idx)
+            experiment.log_metric("train_grad_norm", grad_norms[-1], step=global_step + batch_idx)
 
         # Print progress and log resources
         if batch_idx % print_freq == 0:
@@ -217,10 +262,13 @@ def train_one_epoch(model, data_loader, criterion, optimizer, device, epoch, con
 
             print(f'Epoch: [{epoch}][{batch_idx}/{num_batches}]\t'
                   f'Loss: {loss.item():.4f}\t'
+                  f'Grad: {grad_norms[-1]:.4f}\t'
                   f'Time: {elapsed:.2f}s')
 
     # Compute epoch metrics
     metrics = metric_tracker.compute()
+    metrics['grad_norm'] = np.mean(grad_norms) if grad_norms else 0.0
+    metrics['grad_norm_max'] = np.max(grad_norms) if grad_norms else 0.0
 
     # Log to Comet ML
     if experiment is not None:
@@ -242,7 +290,7 @@ def train_one_epoch(model, data_loader, criterion, optimizer, device, epoch, con
 
 @torch.no_grad()
 def evaluate(model, data_loader, criterion, device, config, experiment=None):
-    """Evaluate the model."""
+    """Evaluate the model with numerical stability."""
     model.eval()
     metric_tracker = MetricTracker()
 
@@ -252,6 +300,15 @@ def evaluate(model, data_loader, criterion, device, config, experiment=None):
 
         # Forward pass
         predictions, _ = model(history)
+        # Clamp predictions for numerical stability
+        predictions = torch.clamp(predictions, min=-10, max=10)
+
+        # Check for NaN predictions
+        if torch.isnan(predictions).any() or torch.isinf(predictions).any():
+            print(f'WARNING: NaN/Inf predictions detected in evaluation. Skipping batch.')
+            functional.reset_net(model)
+            continue
+
         loss = criterion(predictions, target)
 
         # Reset spiking neuron states
@@ -468,18 +525,29 @@ def main(args):
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=config['lr'],
-        weight_decay=config['weight_decay']
+        weight_decay=config['weight_decay'],
+        betas=(0.9, 0.999),
+        eps=1e-8
     )
 
-    # Learning rate scheduler
+    # AMP GradScaler for mixed precision training
+    scaler = None
+    if config.get('amp', False) and device.type == 'cuda':
+        scaler = GradScaler()
+        print('Using Automatic Mixed Precision (AMP)')
+
+    # Learning rate scheduler with improved warmup
+    warmup_epochs = config.get('warmup_epochs', 0)
+    total_epochs = config['epochs']
+
+    # Main scheduler (after warmup)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
-        T_max=config['epochs'] - config.get('warmup_epochs', 0),
+        T_max=total_epochs - warmup_epochs,
         eta_min=config.get('min_lr', 1e-5)
     )
 
     # Warmup scheduler
-    warmup_epochs = config.get('warmup_epochs', 0)
     if warmup_epochs > 0:
         warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
             optimizer,
@@ -487,6 +555,7 @@ def main(args):
             end_factor=1.0,
             total_iters=warmup_epochs
         )
+        print(f'Using warmup for {warmup_epochs} epochs: {config.get("warmup_lr", 1e-5):.2e} -> {config["lr"]:.2e}')
     else:
         warmup_scheduler = None
 
@@ -522,7 +591,7 @@ def main(args):
         # Train
         train_metrics = train_one_epoch(
             model, train_loader, criterion, optimizer, device,
-            epoch, config, writer, experiment
+            epoch, config, writer, experiment, scaler
         )
 
         print(f'Train - Loss: {train_metrics["loss"]:.4f}, '

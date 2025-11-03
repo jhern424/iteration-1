@@ -1,0 +1,99 @@
+# Electrophysiology Spike Forecasting Configuration - STABLE VERSION
+# History: 200ms, Forecast: 100ms, Bins: 5ms
+#
+# IMPROVEMENTS FOR TRAINING STABILITY:
+# - Added gradient clipping (grad_clip: 1.0)
+# - Reduced learning rate (1e-3 -> 5e-4)
+# - Increased warmup (2 -> 10 epochs)
+# - Reduced batch size for stability (512 -> 256)
+# - Using PLIF (learnable parameters) instead of LIF
+# - Enabled AMP for faster training
+# - Clamped predictions for numerical stability
+# - Fixed AUC-ROC to use probabilities
+
+# Dataset parameters
+data_dir: ./dta_sebas/
+train_data: Trace_20251018_20_09_51-LC-kolf2.2-day51-shank3_acqm.zip
+test_data: Trace_20251018_20_09_51-LC-kolf2.2-day51-wt_acqm.zip
+dataset: ephys
+
+# Temporal parameters
+history_ms: 200.0          # Input history window (ms)
+forecast_ms: 100.0         # Forecast window (ms)
+bin_size_ms: 5.0           # Time bin size (ms)
+stride_ms: 50.0            # Sliding window stride (ms)
+min_spikes: 10             # Minimum spikes per neuron
+
+# Model architecture parameters
+in_channels: 1             # Single neuron input
+embed_dim: 256             # Embedding dimension
+num_heads: 8               # Number of attention heads
+num_layers: 2              # Number of transformer blocks
+mlp_ratio: 4               # MLP expansion ratio
+time_steps: 4              # Multi-step time dimension (T)
+chunk_size: 2              # Chunk size for STAtten
+dropout: 0.1               # Dropout rate
+
+# Spiking parameters
+spike_mode: plif           # CHANGED: Use PLIF (learnable) instead of LIF
+attention_mode: STAtten    # STAtten or SDT
+attn_mode: direct_xor      # Attention computation mode
+
+# Training parameters
+batch_size: 256            # REDUCED: 512 -> 256 for stability
+val_batch_size: 256        # Match training batch size
+epochs: 100                # Full training run
+lr: 5e-4                   # REDUCED: 1e-3 -> 5e-4 for stability
+min_lr: 1e-6               # Minimum learning rate
+weight_decay: 1e-4         # Weight decay
+opt: adamw                 # Optimizer
+sched: cosine              # Learning rate scheduler
+warmup_epochs: 10          # INCREASED: 2 -> 10 for gradual warmup
+warmup_lr: 1e-6            # Start very low
+cooldown_epochs: 5         # Cooldown epochs
+grad_clip: 1.0             # ADDED: Gradient clipping threshold (CRITICAL!)
+
+# Loss parameters
+pos_weight: null           # Will be calculated from data (spike vs non-spike ratio)
+loss_type: bce             # Binary cross-entropy loss
+
+# Regularization
+mixup: 0.0                 # No mixup for temporal data
+cutmix: 0.0                # No cutmix for temporal data
+smoothing: 0.0             # No label smoothing for binary targets
+
+# Data split
+train_split: 0.8           # 80% of neurons for training
+val_split: 0.1             # 10% for validation
+test_split: 0.1            # 10% for testing (from same recording)
+max_samples_per_neuron: null  # null = use all windows
+
+# Model EMA
+model_ema: False
+model_ema_decay: 0.9998
+
+# Evaluation metrics
+eval_metrics:
+  - f1
+  - precision
+  - recall
+  - auc_roc
+  - temporal_correlation
+
+# Logging and checkpointing
+print_freq: 50             # Print frequency
+save_freq: 10              # Save checkpoint every N epochs
+log_dir: ./logs/ephys/
+checkpoint_dir: ./checkpoints/ephys/
+tensorboard: True
+
+# Hardware
+workers: 8                 # REDUCED: 16 -> 8 (more stable)
+amp: True                  # Automatic mixed precision - faster training
+channels_last: False
+seed: 42                   # Random seed
+
+# Misc
+pretrained: False
+resume: null               # Path to checkpoint to resume from
+no_resume_opt: False
