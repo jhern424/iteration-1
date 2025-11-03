@@ -1,0 +1,67 @@
+# SNN + Transformer Spike Forecasting Configuration
+# Hybrid architecture: SpikingJelly LIF + Transformer attention
+# History: 200ms, Forecast: 100ms, Bins: 5ms
+
+# Dataset parameters
+data_dir: ./dta_sebas/
+train_data: Trace_20251018_20_09_51-LC-kolf2.2-day51-shank3_acqm.zip
+test_data: Trace_20251018_20_09_51-LC-kolf2.2-day51-wt_acqm.zip
+dataset: ephys
+
+# Temporal parameters
+history_ms: 200.0          # Input history window (ms)
+forecast_ms: 100.0         # Forecast window (ms)
+bin_size_ms: 5.0           # Time bin size (ms)
+stride_ms: 50.0            # Sliding window stride (ms)
+min_spikes: 10             # Minimum spikes per neuron
+
+# Model architecture parameters
+in_channels: 1             # Single neuron input
+embed_dim: 128             # Embedding dimension (reduced from 256 for efficiency)
+num_heads: 4               # Number of attention heads (must divide embed_dim)
+snn_layers: 2              # Number of SNN encoder layers
+transformer_layers: 3      # Number of transformer layers
+dim_feedforward: 256       # Feedforward dimension in transformer
+dropout: 0.1               # Dropout rate
+tau: 2.0                   # LIF neuron time constant
+
+# Training parameters
+batch_size: 256            # Batch size (reduced for autoregressive model)
+val_batch_size: 256        # Validation batch size
+epochs: 100                # Total training epochs
+lr: 5e-4                   # Learning rate (lower for stability)
+min_lr: 1e-6               # Minimum learning rate
+weight_decay: 1e-4         # Weight decay
+opt: adamw                 # Optimizer
+sched: cosine              # Learning rate scheduler
+warmup_epochs: 5           # Warmup epochs
+warmup_lr: 1e-5            # Warmup learning rate
+
+# Teacher forcing schedule (anneal over training)
+teacher_forcing_start: 1.0 # Start with 100% teacher forcing
+teacher_forcing_end: 0.3   # End with 30% teacher forcing (some exploration)
+
+# Loss parameters
+loss_type: poisson         # 'poisson' or 'bernoulli' - Poisson better for sparse spikes
+
+# Data split
+train_split: 0.8           # 80% for training
+val_split: 0.1             # 10% for validation
+test_split: 0.1            # 10% for testing
+max_samples_per_neuron: null  # null = use all windows
+
+# Logging and checkpointing
+print_freq: 50             # Print frequency
+save_freq: 10              # Save checkpoint every N epochs
+log_dir: ./logs/ephys_snn_transformer/
+checkpoint_dir: ./checkpoints/ephys_snn_transformer/
+tensorboard: True
+
+# Hardware
+workers: 8                 # DataLoader workers (reduced for stability)
+amp: False                 # No AMP for now (SNN + Transformer can be unstable with mixed precision)
+seed: 42                   # Random seed
+
+# Misc
+pretrained: False
+resume: null               # Path to checkpoint to resume from
