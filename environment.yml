@@ -1,0 +1,29 @@
+name: snn-torch
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - numpy>=1.20.0
+  - matplotlib>=3.3.0
+  - scipy>=1.7.0
+  - pyyaml
+  - jupyter
+  - ipython
+
+  # Install via pip
+  - pip:
+    - torch==1.13.1
+    - torchvision
+    - timm==0.6.12
+    - cupy-cuda12x  # For CUDA 12.x support
+    - spikingjelly==0.0.0.0.12
+    - tensorboard
+    - scikit-learn>=0.24.0
+    - braingeneers>=1.0.0
+    - tqdm
+    - pandas
+    - seaborn
+    - h5py

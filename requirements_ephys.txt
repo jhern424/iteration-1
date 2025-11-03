@@ -1,0 +1,16 @@
+# Additional requirements for ephys spike forecasting
+# Base requirements from original requirements.txt:
+# timm==0.6.12
+# pytorch==1.13.1 (or 1.10.0-2.0.0)
+# cupy
+# spikingjelly==0.0.0.0.12
+# tensorboard
+
+# Additional packages for ephys data
+numpy>=1.20.0
+matplotlib>=3.3.0
+scipy>=1.7.0
+scikit-learn>=0.24.0
+
+# Optional: for advanced ephys analysis
+# braingeneers  # If needed for SpikeData compatibility
