@@ -134,7 +134,12 @@ class TransformerEncoder(nn.Module):
             batch_first=True,  # (B, T, E) format
             norm_first=True  # Pre-norm architecture (more stable)
         )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        # Disable nested tensor warning (pre-norm disables this optimization, which is fine)
+        self.transformer = nn.TransformerEncoder(
+            encoder_layer,
+            num_layers=num_layers,
+            enable_nested_tensor=False  # Explicitly disable to avoid warning
+        )
 
     def forward(self, x, mask=None):
         """
@@ -412,11 +417,13 @@ class BernoulliSpikeLoss(nn.Module):
     """
     Bernoulli loss for binary spike prediction.
     Handles spike sparsity better than standard BCE.
+    Includes positive class weighting to handle extreme imbalance.
     """
 
-    def __init__(self, dt=0.005, eps=1e-8):
+    def __init__(self, dt=0.005, pos_weight=50.0, eps=1e-8):
         super().__init__()
         self.dt = dt
+        self.pos_weight = pos_weight  # Weight for positive class
         self.eps = eps
 
     def forward(self, log_rate, target):
@@ -433,8 +440,10 @@ class BernoulliSpikeLoss(nn.Module):
         p = 1.0 - torch.exp(-rate * self.dt)
         p = p.clamp(self.eps, 1.0 - self.eps)
 
-        # Bernoulli NLL
-        nll = -(target * torch.log(p) + (1 - target) * torch.log(1 - p))
+        # Weighted Bernoulli NLL (weight positive class more)
+        # Standard: -[y*log(p) + (1-y)*log(1-p)]
+        # Weighted: -[w*y*log(p) + (1-y)*log(1-p)]
+        nll = -(self.pos_weight * target * torch.log(p) + (1 - target) * torch.log(1 - p))
 
         return nll.mean()
 

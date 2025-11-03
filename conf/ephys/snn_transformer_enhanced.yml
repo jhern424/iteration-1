@@ -1,0 +1,69 @@
+# Enhanced SNN + Transformer with Spikeformer Techniques
+# Adds: Spiking Q/K/V, Talking Heads, LIF residuals, BatchNorm
+# History: 200ms, Forecast: 100ms, Bins: 5ms
+
+# Dataset parameters
+data_dir: ./dta_sebas/
+train_data: Trace_20251018_20_09_51-LC-kolf2.2-day51-shank3_acqm.zip
+test_data: Trace_20251018_20_09_51-LC-kolf2.2-day51-wt_acqm.zip
+dataset: ephys
+
+# Temporal parameters
+history_ms: 200.0
+forecast_ms: 100.0
+bin_size_ms: 5.0
+stride_ms: 50.0
+min_spikes: 10
+
+# Model architecture (ENHANCED with Spikeformer techniques)
+model_type: enhanced       # Use 'enhanced' model
+in_channels: 1
+embed_dim: 64              # Start small
+num_heads: 4               # Must divide embed_dim
+snn_layers: 1              # Simple encoder
+transformer_layers: 2      # Fewer layers (enhanced blocks are more powerful)
+dim_feedforward: 128       # MLP hidden dim
+mlp_ratio: 2               # For SpikingMLP (hidden = embed_dim * mlp_ratio)
+dropout: 0.2
+tau: 2.0
+
+# Training parameters (conservative)
+batch_size: 128
+val_batch_size: 128
+epochs: 100
+lr: 5e-5                   # LOWER than v2 (enhanced model more sensitive)
+min_lr: 1e-7
+weight_decay: 1e-3
+opt: adamw
+sched: cosine
+warmup_epochs: 15          # LONGER warmup for stability
+warmup_lr: 1e-6
+
+# Teacher forcing
+teacher_forcing_start: 1.0
+teacher_forcing_end: 0.7
+
+# Loss parameters
+loss_type: bernoulli       # With auto pos_weight
+
+# Data split
+train_split: 0.8
+val_split: 0.1
+test_split: 0.1
+max_samples_per_neuron: null
+
+# Logging
+print_freq: 20
+save_freq: 10
+log_dir: ./logs/ephys_snn_transformer_enhanced/
+checkpoint_dir: ./checkpoints/ephys_snn_transformer_enhanced/
+tensorboard: True
+
+# Hardware
+workers: 4
+amp: False
+seed: 42
+
+# Misc
+pretrained: False
+resume: null

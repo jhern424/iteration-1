@@ -416,19 +416,43 @@ def main(args):
     print('Creating model...')
     print('='*80)
 
-    # Create model
-    model = create_snn_transformer(
-        history_ms=config['history_ms'],
-        forecast_ms=config['forecast_ms'],
-        bin_size_ms=config['bin_size_ms'],
-        embed_dim=config['embed_dim'],
-        snn_layers=config['snn_layers'],
-        transformer_layers=config['transformer_layers'],
-        num_heads=config['num_heads'],
-        dim_feedforward=config['dim_feedforward'],
-        dropout=config['dropout'],
-        tau=config['tau'],
-    )
+    # Create model (base or enhanced)
+    model_type = config.get('model_type', 'base')
+
+    if model_type == 'enhanced':
+        print('Using ENHANCED model with Spikeformer techniques')
+        print('  - Spiking Q/K/V projections')
+        print('  - Talking Heads (cross-head communication)')
+        print('  - LIF on residual connections')
+        print('  - BatchNorm everywhere')
+
+        from model.snn_transformer_enhanced import create_enhanced_snn_transformer
+        model = create_enhanced_snn_transformer(
+            history_ms=config['history_ms'],
+            forecast_ms=config['forecast_ms'],
+            bin_size_ms=config['bin_size_ms'],
+            embed_dim=config['embed_dim'],
+            snn_layers=config['snn_layers'],
+            transformer_layers=config['transformer_layers'],
+            num_heads=config['num_heads'],
+            mlp_ratio=config.get('mlp_ratio', 4),
+            dropout=config['dropout'],
+            tau=config['tau'],
+        )
+    else:
+        print('Using BASE model')
+        model = create_snn_transformer(
+            history_ms=config['history_ms'],
+            forecast_ms=config['forecast_ms'],
+            bin_size_ms=config['bin_size_ms'],
+            embed_dim=config['embed_dim'],
+            snn_layers=config['snn_layers'],
+            transformer_layers=config['transformer_layers'],
+            num_heads=config['num_heads'],
+            dim_feedforward=config['dim_feedforward'],
+            dropout=config['dropout'],
+            tau=config['tau'],
+        )
 
     model = model.to(device)
 
@@ -436,16 +460,25 @@ def main(args):
     n_params = sum(p.numel() for p in model.parameters())
     print(f'Model parameters: {n_params:,}')
 
-    # Loss function
+    # Loss function with class weight calculation
     loss_type = config.get('loss_type', 'poisson')
     dt = config['bin_size_ms'] / 1000.0  # Convert to seconds
+
+    # Calculate positive class weight from data (spike sparsity)
+    print('\nCalculating spike rate for loss weighting...')
+    sample_history, sample_target = next(iter(train_loader))
+    spike_rate = sample_target.mean().item()
+    pos_weight = (1.0 - spike_rate) / max(spike_rate, 1e-6)  # (neg_samples / pos_samples)
+    pos_weight = min(pos_weight, 100.0)  # Cap at 100 to avoid extreme values
+    print(f'Spike rate: {spike_rate:.6f} ({spike_rate*100:.4f}%)')
+    print(f'Positive class weight: {pos_weight:.2f}')
 
     if loss_type == 'poisson':
         criterion = PoissonNLLLoss(dt=dt)
         print(f'Using Poisson NLL loss (dt={dt:.4f}s)')
     elif loss_type == 'bernoulli':
-        criterion = BernoulliSpikeLoss(dt=dt)
-        print(f'Using Bernoulli loss (dt={dt:.4f}s)')
+        criterion = BernoulliSpikeLoss(dt=dt, pos_weight=pos_weight)
+        print(f'Using Bernoulli loss (dt={dt:.4f}s, pos_weight={pos_weight:.2f})')
     else:
         raise ValueError(f"Unknown loss type: {loss_type}")
 

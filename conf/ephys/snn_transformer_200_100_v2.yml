@@ -1,0 +1,67 @@
+# SNN + Transformer Spike Forecasting Configuration V2
+# FIXES for collapsed model (predicting all zeros)
+# History: 200ms, Forecast: 100ms, Bins: 5ms
+
+# Dataset parameters
+data_dir: ./dta_sebas/
+train_data: Trace_20251018_20_09_51-LC-kolf2.2-day51-shank3_acqm.zip
+test_data: Trace_20251018_20_09_51-LC-kolf2.2-day51-wt_acqm.zip
+dataset: ephys
+
+# Temporal parameters
+history_ms: 200.0          # Input history window (ms)
+forecast_ms: 100.0         # Forecast window (ms)
+bin_size_ms: 5.0           # Time bin size (ms)
+stride_ms: 50.0            # Sliding window stride (ms)
+min_spikes: 10             # Minimum spikes per neuron
+
+# Model architecture parameters
+in_channels: 1             # Single neuron input
+embed_dim: 64              # REDUCED from 128 (smaller model, easier to train)
+num_heads: 4               # Number of attention heads
+snn_layers: 1              # REDUCED from 2 (simpler model)
+transformer_layers: 2      # REDUCED from 3 (simpler model)
+dim_feedforward: 128       # REDUCED from 256
+dropout: 0.2               # INCREASED from 0.1 (more regularization)
+tau: 2.0                   # LIF neuron time constant
+
+# Training parameters
+batch_size: 128            # REDUCED from 256 (better gradients)
+val_batch_size: 128        # Match training batch size
+epochs: 100                # Total training epochs
+lr: 1e-4                   # REDUCED from 5e-4 (CRITICAL FIX - was too high)
+min_lr: 1e-7               # Lower minimum
+weight_decay: 1e-3         # INCREASED from 1e-4 (more regularization)
+opt: adamw                 # Optimizer
+sched: cosine              # Learning rate scheduler
+warmup_epochs: 10          # INCREASED from 5 (longer warmup)
+warmup_lr: 1e-6            # REDUCED from 1e-5 (gentler start)
+
+# Teacher forcing schedule (keep MORE teacher forcing)
+teacher_forcing_start: 1.0 # Start with 100% teacher forcing
+teacher_forcing_end: 0.7   # INCREASED from 0.3 (keep more guidance)
+
+# Loss parameters
+loss_type: bernoulli       # CHANGED from poisson (better for binary sparse data)
+
+# Data split
+train_split: 0.8           # 80% for training
+val_split: 0.1             # 10% for validation
+test_split: 0.1            # 10% for testing
+max_samples_per_neuron: null  # null = use all windows
+
+# Logging and checkpointing
+print_freq: 20             # REDUCED from 50 (more frequent logging)
+save_freq: 10              # Save checkpoint every N epochs
+log_dir: ./logs/ephys_snn_transformer/
+checkpoint_dir: ./checkpoints/ephys_snn_transformer/
+tensorboard: True
+
+# Hardware
+workers: 4                 # REDUCED from 8 (more stable data loading)
+amp: False                 # No AMP
+seed: 42                   # Random seed
+
+# Misc
+pretrained: False
+resume: null               # Path to checkpoint to resume from
