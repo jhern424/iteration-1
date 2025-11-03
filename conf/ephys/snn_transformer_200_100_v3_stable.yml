@@ -1,0 +1,71 @@
+# SNN + Transformer - V3 STABLE (Medium Model)
+# Balance: GPU utilization + numerical stability
+# History: 200ms, Forecast: 100ms, Bins: 5ms
+
+# Dataset parameters
+data_dir: ./dta_sebas/
+train_data: Trace_20251018_20_09_51-LC-kolf2.2-day51-shank3_acqm.zip
+test_data: Trace_20251018_20_09_51-LC-kolf2.2-day51-wt_acqm.zip
+dataset: ephys
+
+# Temporal parameters
+history_ms: 200.0
+forecast_ms: 100.0
+bin_size_ms: 5.0
+stride_ms: 50.0
+min_spikes: 10
+
+# Model architecture (MEDIUM - stepping stone to large)
+model_type: base
+in_channels: 1
+embed_dim: 128             # Middle ground: 64 → 128 → 256
+num_heads: 4               # Reduced from 8 for stability
+snn_layers: 2              # Keep depth
+transformer_layers: 3      # Reduced from 4
+dim_feedforward: 256       # Middle ground: 128 → 256 → 512
+dropout: 0.3               # INCREASED for more regularization
+tau: 2.0
+
+# Training parameters (ULTRA-CONSERVATIVE)
+batch_size: 384            # REDUCED from 512 (easier on gradients)
+val_batch_size: 384
+epochs: 100
+lr: 1e-5                   # REDUCED from 5e-5 (10x lower than original!)
+min_lr: 1e-9
+weight_decay: 5e-3         # INCREASED regularization (5x)
+opt: adamw
+sched: cosine
+warmup_epochs: 30          # INCREASED from 20 (longer ramp)
+warmup_lr: 1e-8            # Start even lower
+clip_grad_norm: 0.3        # REDUCED from 0.5 (more aggressive clipping)
+
+# Teacher forcing
+teacher_forcing_start: 1.0
+teacher_forcing_end: 0.7
+
+# Loss parameters
+loss_type: bernoulli
+pos_weight_cap: 15.0       # REDUCED from 30 (more conservative for stability)
+
+# Data split
+train_split: 0.8
+val_split: 0.1
+test_split: 0.1
+max_samples_per_neuron: null
+
+# Logging
+print_freq: 10
+save_freq: 10
+log_dir: ./logs/ephys_snn_transformer_v3_stable/
+checkpoint_dir: ./checkpoints/ephys_snn_transformer_v3_stable/
+tensorboard: True
+
+# Hardware
+workers: 12                # Reduced from 16 (smaller batches)
+amp: True                  # Keep AMP for speed
+channels_last: False
+seed: 42
+
+# Misc
+pretrained: False
+resume: null

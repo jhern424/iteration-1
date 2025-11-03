@@ -490,9 +490,10 @@ def main(args):
     sample_history, sample_target = next(iter(train_loader))
     spike_rate = sample_target.mean().item()
     pos_weight = (1.0 - spike_rate) / max(spike_rate, 1e-6)  # (neg_samples / pos_samples)
-    pos_weight = min(pos_weight, 30.0)  # Cap at 30 (REDUCED from 100 for stability)
+    pos_weight_cap = config.get('pos_weight_cap', 30.0)  # Configurable cap
+    pos_weight = min(pos_weight, pos_weight_cap)
     print(f'Spike rate: {spike_rate:.6f} ({spike_rate*100:.4f}%)')
-    print(f'Positive class weight: {pos_weight:.2f} (capped for numerical stability)')
+    print(f'Positive class weight: {pos_weight:.2f} (capped at {pos_weight_cap:.1f} for numerical stability)')
 
     if loss_type == 'poisson':
         criterion = PoissonNLLLoss(dt=dt)
