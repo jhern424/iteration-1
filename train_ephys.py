@@ -404,20 +404,25 @@ def main(args):
     print(f'Dataset splits: train={n_train}, val={n_val}, test={n_test}')
 
     # Create data loaders
+    num_workers = config.get('workers', 4)
     train_loader = DataLoader(
         train_subset,
         batch_size=config['batch_size'],
         shuffle=True,
-        num_workers=config.get('workers', 4),
+        num_workers=num_workers,
         pin_memory=True,
+        prefetch_factor=4 if num_workers > 0 else None,  # Pre-load 4 batches per worker
+        persistent_workers=True if num_workers > 0 else False,  # Keep workers alive between epochs
     )
 
     val_loader = DataLoader(
         val_subset,
         batch_size=config['val_batch_size'],
         shuffle=False,
-        num_workers=config.get('workers', 4),
+        num_workers=num_workers,
         pin_memory=True,
+        prefetch_factor=4 if num_workers > 0 else None,  # Pre-load 4 batches per worker
+        persistent_workers=True if num_workers > 0 else False,  # Keep workers alive
     )
 
     print(f'Train batches: {len(train_loader)}, Val batches: {len(val_loader)}')

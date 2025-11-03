@@ -30,9 +30,9 @@ attention_mode: STAtten    # STAtten or SDT
 attn_mode: direct_xor      # Attention computation mode
 
 # Training parameters
-batch_size: 64
-val_batch_size: 64
-epochs: 10
+batch_size: 512            # Increased from 64 to fully utilize GPU memory
+val_batch_size: 512        # Match training batch size
+epochs: 100                # Full training run
 lr: 1e-3                   # Learning rate
 min_lr: 1e-5               # Minimum learning rate
 weight_decay: 1e-4         # Weight decay
@@ -77,8 +77,8 @@ checkpoint_dir: ./checkpoints/ephys/
 tensorboard: True
 
 # Hardware
-workers: 4                 # DataLoader workers
-amp: False                 # Automatic mixed precision
+workers: 16                # DataLoader workers - increased for better data loading
+amp: True                  # Automatic mixed precision - faster training
 channels_last: False
 seed: 42                   # Random seed
 
