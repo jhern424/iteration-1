@@ -1,0 +1,70 @@
+# SNN + Transformer - V3 OPTIMIZED FOR GPU UTILIZATION
+# Targets: >80% GPU utilization, <25 GB VRAM
+# History: 200ms, Forecast: 100ms, Bins: 5ms
+
+# Dataset parameters
+data_dir: ./dta_sebas/
+train_data: Trace_20251018_20_09_51-LC-kolf2.2-day51-shank3_acqm.zip
+test_data: Trace_20251018_20_09_51-LC-kolf2.2-day51-wt_acqm.zip
+dataset: ephys
+
+# Temporal parameters
+history_ms: 200.0
+forecast_ms: 100.0
+bin_size_ms: 5.0
+stride_ms: 50.0
+min_spikes: 10
+
+# Model architecture (LARGER for better GPU utilization)
+model_type: base           # Use base model
+in_channels: 1
+embed_dim: 256             # INCREASED from 64 (4x larger)
+num_heads: 8               # INCREASED from 4 (better parallelism)
+snn_layers: 2              # INCREASED from 1 (more compute)
+transformer_layers: 4      # INCREASED from 2 (more layers)
+dim_feedforward: 512       # INCREASED from 128 (4x larger)
+dropout: 0.2
+tau: 2.0
+
+# Training parameters (OPTIMIZED for throughput)
+batch_size: 512            # INCREASED from 128 (4x larger) ⭐
+val_batch_size: 512        # Match training
+epochs: 100
+lr: 5e-5                   # Keep stable LR
+min_lr: 1e-8
+weight_decay: 1e-3
+opt: adamw
+sched: cosine
+warmup_epochs: 20
+warmup_lr: 1e-7
+clip_grad_norm: 0.5
+
+# Teacher forcing
+teacher_forcing_start: 1.0
+teacher_forcing_end: 0.7
+
+# Loss parameters
+loss_type: bernoulli
+
+# Data split
+train_split: 0.8
+val_split: 0.1
+test_split: 0.1
+max_samples_per_neuron: null
+
+# Logging
+print_freq: 10             # More frequent logging
+save_freq: 10
+log_dir: ./logs/ephys_snn_transformer_v3_optimized/
+checkpoint_dir: ./checkpoints/ephys_snn_transformer_v3_optimized/
+tensorboard: True
+
+# Hardware (OPTIMIZED for throughput) ⭐
+workers: 16                # INCREASED from 4 (better data loading)
+amp: True                  # ENABLED automatic mixed precision (2x faster)
+channels_last: False
+seed: 42
+
+# Misc
+pretrained: False
+resume: null

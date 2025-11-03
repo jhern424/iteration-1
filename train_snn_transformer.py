@@ -156,13 +156,14 @@ class MetricTracker:
 
 
 def train_one_epoch(model, data_loader, criterion, optimizer, device, epoch, config,
-                     writer=None, experiment=None):
+                     writer=None, experiment=None, scaler=None):
     """Train for one epoch with teacher forcing schedule."""
     model.train()
     metric_tracker = MetricTracker(dt=config['bin_size_ms'] / 1000.0)
 
     num_batches = len(data_loader)
     print_freq = config.get('print_freq', 50)
+    use_amp = config.get('amp', False) and scaler is not None
 
     # Teacher forcing schedule (anneal from start to end over epochs)
     tf_start = config.get('teacher_forcing_start', 1.0)
@@ -180,19 +181,38 @@ def train_one_epoch(model, data_loader, criterion, optimizer, device, epoch, con
         history = history.to(device)
         target = target.to(device)
 
-        # Forward pass with teacher forcing
-        predictions = model(history, target=target, teacher_forcing_ratio=teacher_forcing_ratio)
-        loss = criterion(predictions, target)
-
-        # Backward pass
+        # Forward pass with teacher forcing (with AMP if enabled)
         optimizer.zero_grad()
-        loss.backward()
 
-        # Gradient clipping for stability (from config)
-        clip_norm = config.get('clip_grad_norm', 1.0)
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=clip_norm)
+        if use_amp:
+            with torch.cuda.amp.autocast():
+                predictions = model(history, target=target, teacher_forcing_ratio=teacher_forcing_ratio)
+                loss = criterion(predictions, target)
 
-        optimizer.step()
+            # Backward pass with gradient scaling
+            scaler.scale(loss).backward()
+
+            # Gradient clipping for stability (from config)
+            clip_norm = config.get('clip_grad_norm', 1.0)
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=clip_norm)
+
+            # Optimizer step with scaler
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            # Standard training without AMP
+            predictions = model(history, target=target, teacher_forcing_ratio=teacher_forcing_ratio)
+            loss = criterion(predictions, target)
+
+            # Backward pass
+            loss.backward()
+
+            # Gradient clipping for stability (from config)
+            clip_norm = config.get('clip_grad_norm', 1.0)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=clip_norm)
+
+            optimizer.step()
 
         # Reset spiking neuron states (already done in model, but ensure)
         functional.reset_net(model)
@@ -491,6 +511,12 @@ def main(args):
         betas=(0.9, 0.999)
     )
 
+    # Gradient scaler for AMP
+    scaler = None
+    if config.get('amp', False) and device.type == 'cuda':
+        scaler = torch.cuda.amp.GradScaler()
+        print(f'Using Automatic Mixed Precision (AMP) for faster training')
+
     # Learning rate scheduler with warmup
     warmup_epochs = config.get('warmup_epochs', 0)
 
@@ -542,7 +568,7 @@ def main(args):
         # Train
         train_metrics = train_one_epoch(
             model, train_loader, criterion, optimizer, device,
-            epoch, config, writer, experiment
+            epoch, config, writer, experiment, scaler
         )
 
         print(f'Train - Loss: {train_metrics["loss"]:.4f}, '
