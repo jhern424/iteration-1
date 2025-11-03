@@ -16,7 +16,7 @@ min_spikes: 10             # Minimum spikes per neuron
 
 # Model architecture parameters
 in_channels: 1             # Single neuron input
-embed_dim: 128            # Embedding dimension I had 256 before
+embed_dim: 256           # Embedding dimension I had 256 before
 num_heads: 8               # Number of attention heads
 num_layers: 2              # Number of transformer blocks
 mlp_ratio: 4               # MLP expansion ratio
